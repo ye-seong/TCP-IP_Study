@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>온습도 모니터링</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border: 2px solid #333;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        
+        .status {
+            text-align: center;
+            font-size: 18px;
+            margin: 20px 0;
+            padding: 10px;
+            background: #e0e0e0;
+            border: 1px solid #999;
+        }
+        
+        .sensors {
+            display: flex;
+            justify-content: space-around;
+            margin: 30px 0;
+        }
+        
+        .sensor-box {
+            border: 3px solid #666;
+            padding: 20px;
+            text-align: center;
+            background: #f9f9f9;
+            width: 200px;
+        }
+        
+        .sensor-box.warning {
+            background: #ffcccc;
+            border-color: #ff0000;
+        }
+        
+        .sensor-value {
+            font-size: 36px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .sensor-label {
+            font-size: 16px;
+            color: #666;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        button {
+            font-size: 16px;
+            padding: 10px 20px;
+            margin: 5px;
+            border: 2px solid #333;
+            background: white;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background: #ddd;
+        }
+        
+        .log {
+            border: 1px solid #999;
+            background: #f5f5f5;
+            padding: 10px;
+            height: 200px;
+            overflow-y: scroll;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        .settings {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #999;
+            background: #f9f9f9;
+        }
+        
+        .settings label {
+            display: inline-block;
+            width: 120px;
+            margin: 5px 0;
+        }
+        
+        .settings input {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #999;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #999;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>라즈베리파이 온습도 모니터링</h1>
+        
+        <div class="status" id="status">연결 확인중...</div>
+        
+        <div class="sensors">
+            <div class="sensor-box" id="temp-box">
+                <div class="sensor-value" id="temperature">--°C</div>
+                <div class="sensor-label">온도</div>
+                <div id="temp-time">--:--:--</div>
+            </div>
+            
+            <div class="sensor-box" id="humidity-box">
+                <div class="sensor-value" id="humidity">--%</div>
+                <div class="sensor-label">습도</div>
+                <div id="humidity-time">--:--:--</div>
+            </div>
+        </div>
+        
+        <div class="settings">
+            <h3>경고 설정</h3>
+            <label>온도 임계값:</label>
+            <input type="number" id="tempThreshold" value="28"> °C<br>
+            <label>습도 임계값:</label>
+            <input type="number" id="humidityThreshold" value="70"> %<br>
+            <button onclick="saveSettings()">설정 저장</button>
+        </div>
+        
+        <div class="controls">
+            <button onclick="toggleMonitoring()">모니터링 중지/시작</button>
+            <button onclick="testLED()">LED 테스트</button>
+            <button onclick="downloadData()">데이터 다운로드</button>
+            <button onclick="clearLog()">로그 지우기</button>
+        </div>
+        
+        <h3>실시간 로그</h3>
+        <div class="log" id="log"></div>
+        
+        <div class="footer">
+            <p>제작: 라즈베리파이 프로젝트 | 마지막 업데이트: <span id="lastUpdate">--:--:--</span></p>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const log = document.getElementById('log');
+        
+        function addLog(message) {
+            const time = new Date().toLocaleTimeString();
+            log.innerHTML += `[${time}] ${message}<br>`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        socket.on('connect', function() {
+            document.getElementById('status').innerHTML = '🟢 연결됨';
+            addLog('서버에 연결되었습니다.');
+        });
+        
+        socket.on('disconnect', function() {
+            document.getElementById('status').innerHTML = '🔴 연결 끊김';
+            addLog('서버 연결이 끊어졌습니다.');
+        });
+        
+        socket.on('sensor_data', function(data) {
+            document.getElementById('temperature').textContent = data.temperature + '°C';
+            document.getElementById('humidity').textContent = data.humidity + '%';
+            document.getElementById('temp-time').textContent = data.timestamp;
+            document.getElementById('humidity-time').textContent = data.timestamp;
+            document.getElementById('lastUpdate').textContent = data.timestamp;
+            
+            // 경고 상태 표시
+            const tempBox = document.getElementById('temp-box');
+            const humidityBox = document.getElementById('humidity-box');
+            
+            if (data.temp_status === 'warning') {
+                tempBox.classList.add('warning');
+            } else {
+                tempBox.classList.remove('warning');
+            }
+            
+            if (data.humidity_status === 'warning') {
+                humidityBox.classList.add('warning');
+            } else {
+                humidityBox.classList.remove('warning');
+            }
+            
+            // 모니터링 상태 표시
+            if (data.monitoring_enabled === false) {
+                document.getElementById('status').innerHTML = '⏸️ 모니터링 중지됨';
+            } else if (data.alert_active) {
+                document.getElementById('status').innerHTML = '🚨 경고 활성화';
+            } else {
+                document.getElementById('status').innerHTML = '🟢 정상 모니터링';
+            }
+        });
+        
+        // 시스템 로그 실시간 업데이트
+        socket.on('system_log', function(data) {
+            addLog(data.message.replace(/^\[\d{2}:\d{2}:\d{2}\]\s/, '')); // 시간 중복 제거
+        });
+        
+        // 모니터링 상태 변경 알림
+        socket.on('monitoring_status_changed', function(data) {
+            // 이미 system_log로 처리되므로 추가 작업 불필요
+        });
+        
+        function saveSettings() {
+            const settings = {
+                temp_threshold: parseFloat(document.getElementById('tempThreshold').value),
+                humidity_threshold: parseFloat(document.getElementById('humidityThreshold').value)
+            };
+            
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(settings)
+            })
+            .then(response => response.json())
+            .then(data => {
+                addLog('설정이 저장되었습니다.');
+                alert('설정 저장 완료!');
+            });
+        }
+        
+        function toggleMonitoring() {
+            fetch('/api/toggle-monitoring', {method: 'POST'})
+            .then(response => response.json())
+            .then(data => {
+                const status = data.monitoring_enabled ? '시작' : '중지';
+                addLog(`웹에서 모니터링 ${status} (${data.button_count}회)`);
+            });
+        }
+        
+        function testLED() {
+            fetch('/api/test-led', {method: 'POST'})
+            .then(response => response.json())
+            .then(data => {
+                addLog('LED 테스트를 실행했습니다.');
+            });
+        }
+        
+        function downloadData() {
+            fetch('/api/history')
+            .then(response => response.json())
+            .then(data => {
+                // UTF-8 BOM 추가로 한글 깨짐 방지
+                const csv = "\uFEFF시간,온도,습도\n" + 
+                    data.map(row => `${row.timestamp},${row.temperature},${row.humidity}`).join("\n");
+                
+                const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'sensor_data.csv';
+                a.click();
+                window.URL.revokeObjectURL(url);
+                
+                addLog('데이터를 다운로드했습니다.');
+            });
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            addLog('로그가 지워졌습니다.');
+        }
+    </script>
+</body>
+</html>
